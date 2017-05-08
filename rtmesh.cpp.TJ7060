@@ -1,0 +1,231 @@
+#include "rtmesh.h"
+#include "rtray.h"
+#include "rtobject.h"
+#include "rtmaterial.h"
+
+#include <QFile>
+#include <QTextStream>
+#include <QtDebug>
+#include <QtAlgorithms>
+
+rtMesh::rtMesh(): rtObject(0,0,0)
+{
+
+}
+
+rtMesh::rtMesh(QVector<rtTriangle*> *triangles, QVector<rtVector3d*> *vertices): rtObject(0,0,0)
+{
+    this->triangles = *triangles;
+    this->vertices = *vertices;
+}
+
+QVector<rtMesh *> rtMesh::fromOBJ(QString filename)
+{
+    QVector<rtMesh*> objects;
+    QFile file(filename);
+    //file.open(QIODevice::ReadOnly | QIODevice::Text);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
+        return objects;
+
+    QTextStream in(&file);
+    in.setCodec("UTF-8");
+    int objectCount=0;
+    int vertexCount=0;
+    int vertexNormalCount=0;
+    int vertexCoordsCount=0;
+    int facesCount=0;
+    while (!in.atEnd()) {
+        QString lineString = in.readLine().simplified();
+        QStringList  line = lineString.split(QRegExp("\\s"));
+//        qDebug() << line;
+        if(line[0]=="o" || line[0]=="o"){  // object, group
+            objects.push_back(new rtMesh());
+            objectCount++;
+        }
+        if(line[0]=="v"){              //vertex
+            if(objects.size()==0) {objects.push_back(new rtMesh()); objectCount++;};
+            double x,y,z;
+            x = line[1].toDouble();
+            z = line[2].toDouble();
+            y = line[3].toDouble();
+            objects[objectCount-1]->addVertex(x,y,z);
+            vertexCount++;
+        }
+        if(line[0]=="vn"){
+            double x,y,z;
+            x = line[1].toDouble();
+            z = line[2].toDouble();
+            y = line[3].toDouble();
+            objects[objectCount-1]->addNormal(x,y,z);
+            vertexNormalCount++;
+        }
+        if(line[0]=="vt"){
+            double u,v,w=0;
+            u = line[1].toDouble();
+            v = line[2].toDouble();
+            if(line.size()==4) w = line[3].toDouble();
+            objects[objectCount-1]->addCoords(u,v,w);
+            vertexCoordsCount++;
+        }
+        if(line[0]=="f"){
+            int v1,v2,v3;           // vertices numbers
+            int vt1=0,vt2=0,vt3=0;        // vertices coordinates numbers
+            int vn1=0,vn2=0,vn3=0;        // vertices normals numbers;
+            QStringList vert1 = line[1].split('/');
+            v1 = vert1[0].toInt();
+            if(vert1.size()==2)
+                vt1 = vert1[1].toInt();
+            if(vert1.size()==3)
+                vn1 = vert1[2].toInt();
+            QStringList vert2 = line[2].split('/');
+            v2 = vert2[0].toInt();
+            if(vert2.size()==2)
+                vt2 = vert2[1].toInt();
+            if(vert2.size()==3)
+                vn2 = vert2[2].toInt();
+            QStringList vert3 = line[3].split('/');
+            v3 = vert3[0].toInt();
+            if(vert3.size()==2)
+                vt3 = vert3[1].toInt();
+            if(vert3.size()==3)
+                vn3 = vert3[2].toInt();
+            objects[objectCount-1]->addTriangle(v1-1,v2-1,v3-1);
+            if(vt1*vt2*vt3>0){
+                rtVector3d* vvt1 = objects[objectCount-1]->coords[vt1];
+                rtVector3d* vvt2 = objects[objectCount-1]->coords[vt2];
+                rtVector3d* vvt3 = objects[objectCount-1]->coords[vt3];
+                objects[objectCount-1]->triangles[facesCount]->setCoords(vvt1,vvt2,vvt3);
+            }
+            if(vn1*vn2*vn3>0)objects[objectCount-1]->triangles[facesCount]->setNormals(vn1,vn2,vn3);
+            facesCount++;
+        }
+        if(line[0]=="#"){
+            qDebug() << lineString;
+        }
+    }
+    return objects;
+}
+
+rtLightIntensity rtMesh::intersect(const rtRay &ray, double &cur_distance, const QVector<rtObject *> objects, const QVector<rtAbstractLight*> &lights)
+{
+    int i=0;
+    int face=0;
+    while(i<triangles.size()){                 // main loop; checks every triangle for collision and stops if detected
+        bool flag = false;
+        flag = triangles[i]->intersect(ray,cur_distance);
+        if(flag){
+            face=i;
+        }
+        i++;
+    }
+    rtVector3d hit = ray(cur_distance);                           // return closest point
+    return (*material)(ray, hit, triangles[face]->getNormal(),objects,lights);
+}
+
+
+void rtMesh::addTriangle(int v1, int v2, int v3)
+{
+    triangles.push_back(new rtTriangle(vertices[v1],vertices[v2],vertices[v3]));
+}
+
+void rtMesh::addVertex(double x, double y, double z)
+{
+    vertices.push_back(new rtVector3d(x,y,z));
+}
+
+void rtMesh::addNormal(double x, double y, double z)
+{
+    normals.push_back(new rtVector3d(x,y,z));
+}
+
+void rtMesh::addCoords(double u, double v, double w)
+{
+    coords.push_back(new rtVector3d(u,v,w));
+}
+
+
+void rtMesh::setOrigin(const rtVector3d &origin)
+{
+    _origin= _origin+origin;
+    for(rtVector3d* v:vertices){
+        v->operator +=(origin);
+    }
+}
+
+bool rtMesh::isInPath(const rtRay &ray, const double &distance)
+{
+    int i=0;
+    bool flag = false;
+    double cur_distance = distance;
+    while(i<triangles.size()){                 // main loop; checks every triangle for collision and stops if detected
+        flag = triangles[i]->intersect(ray,cur_distance);
+        if(flag && cur_distance>0.0001 && cur_distance<distance)
+            return true;
+        i++;
+    }
+    return false;
+}
+
+
+rtMesh::rtTriangle::rtTriangle(rtVector3d *&v1, rtVector3d *&v2, rtVector3d *&v3)
+{
+    this->v1 = v1;
+    this->v2 = v2;
+    this->v3 = v3;
+    rtVector3d ab = rtVector3d(*v1,*v2);
+    rtVector3d bc = rtVector3d(*v2,*v3);
+    normal = bc.crossProduct(ab);
+    if(normal.length()==0.0){
+        qDebug() << *v1 << *v2 << *v3;
+    }
+    normal = normal.normalize();
+}
+
+bool rtMesh::rtTriangle::intersect(const rtRay &ray, double &cur_distance)
+{
+//    double dotRayNormal = ray.getDirection().dotProduct(normal);    // backface check. dot product of ray direction and triangle normal.
+    double dotRayNormal = normal.dotProduct(ray.getDirection());
+    if(dotRayNormal>0){                                            // if dot product greater than or equal zero, then skip the triangle check
+        return false;                                               // and report to the ship ASAP, we'll bang okay?
+    }
+    // matrix calculations
+    double a = v2->getX()-v1->getX(); double d = v3->getX()-v1->getX(); double g = ray.getDirection().getX(); double j = ray.getOrigin().getX()-v1->getX();
+    double b = v2->getY()-v1->getY(); double e = v3->getY()-v1->getY(); double h = ray.getDirection().getY(); double k = ray.getOrigin().getY()-v1->getY();
+    double c = v2->getZ()-v1->getZ(); double f = v3->getZ()-v1->getZ(); double i = ray.getDirection().getZ(); double l = ray.getOrigin().getZ()-v1->getZ();
+
+    double ei_minus_hf = (e*i)-(h*f);           // pre calculated values fro Cramer equations
+    double gf_minus_di = (g*f)-(d*i);
+    double dh_minus_eg = (d*h)-(e*g);
+    double ak_minus_jb = (a*k)-(j*b);
+    double jc_minus_al = (j*c)-(a*l);
+    double bl_minus_kc = (b*l)-(k*c);
+    double M =      (a*ei_minus_hf) + (b*gf_minus_di) + (c*dh_minus_eg);    //Cramer equations
+    double beta = ( (j*ei_minus_hf) + (k*gf_minus_di) + (l*dh_minus_eg) )/M;
+    double delta= ( (i*ak_minus_jb) + (h*jc_minus_al) + (g*bl_minus_kc) )/M;
+    double t =    ( (f*ak_minus_jb) + (e*jc_minus_al) + (d*bl_minus_kc) )/M;
+
+    if(beta>0 && delta>0 && beta+delta<1 && t<cur_distance && t>0.001){                  // check if point is within triangle
+        cur_distance = t;                                   // it is? then return distance via reference
+        return true;                                        // and report that to the superiors, like a good boy you are
+    }
+    return false;                                           // ain't found nothin'
+}
+
+void rtMesh::rtTriangle::setNormals(rtVector3d* vn1, rtVector3d* vn2, rtVector3d* vn3)
+{
+    this->vn1 = vn1;
+    this->vn2 = vn2;
+    this->vn3 = vn3;
+}
+
+void rtMesh::rtTriangle::setCoords(rtVector3d* vt1, rtVector3d* vt2, rtVector3d* vt3)
+{
+    this->vt1 = vt1;
+    this->vt2 = vt2;
+    this->vt3 = vt3;
+}
+
+rtVector3d rtMesh::rtTriangle::getNormal() const
+{
+    return normal;
+}
