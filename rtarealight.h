@@ -18,6 +18,7 @@ private:
     rtVector3d bottomLeft; // precalculated origin of the orthonormal origin point
     rtVector3d stepX, stepY; // precalculated steps for the calculation of random points
     // rtAbstractLight interface
+	chuj();
 public:
     void getDirection(const rtVector3d &point, QVector<QPair<rtVector3d *, rtLightIntensity *> *> &lightVectors);
 };
